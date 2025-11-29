@@ -1,12 +1,9 @@
-import { Component, EventEmitter, Input, Output, ViewChild } from '@angular/core';
-import { MatTable, MatTableDataSource } from '@angular/material/table';
+import { Component, Input, Output, EventEmitter, ViewChild, inject, signal, computed, effect } from '@angular/core';
+import { MatTableDataSource } from '@angular/material/table';
 import { MatPaginator } from '@angular/material/paginator';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSort } from '@angular/material/sort';
 import { Router } from '@angular/router';
-
-import { SubSink } from 'subsink';
-import { Observable, tap } from 'rxjs';
 
 import { Budget, BudgetRecord } from '@app/model/finance/planning/budgets';
 
@@ -18,57 +15,52 @@ import { ChildBudgetsModalComponent } from '../../modals/child-budgets-modal/chi
   selector: 'app-budget-table',
   templateUrl: './budget-table.component.html',
   styleUrls: ['./budget-table.component.scss'],
+  standalone: true,
 })
-
 export class BudgetTableComponent {
+  private _router$$ = inject(Router);
+  private _dialog = inject(MatDialog);
 
-  private _sbS = new SubSink();
-
-  @Input() budgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
+  // Convert Observable input to signal-based input
+  @Input() budgets: { overview: BudgetRecord[], budgets: any[] } = { overview: [], budgets: [] };
+  
   @Input() canPromote = false;
+  @Output() doPromote = new EventEmitter<void>();
 
-  @Output() doPromote: EventEmitter<void> = new EventEmitter();
-
-  dataSource = new MatTableDataSource();
-
+  dataSource = new MatTableDataSource<any>();
   displayedColumns: string[] = ['name', 'status', 'startYear', 'duration', 'actions'];
 
-  @ViewChild(MatPaginator) paginator: MatPaginator;
-  @ViewChild('sort', { static: true }) sort: MatSort;
+  @ViewChild(MatPaginator) paginator!: MatPaginator;
+  @ViewChild('sort', { static: true }) sort!: MatSort;
 
-  overviewBudgets: BudgetRecord[] = [];
+  // Use computed to derive overviewBudgets from the input
+  overviewBudgets = computed(() => this.budgets.overview);
 
-  constructor(private _router$$: Router,
-              private _dialog: MatDialog,
-  ) { }
+  constructor() {
+    // Effect to update dataSource when budgets change
+    effect(() => {
+      this.dataSource.data = this.budgets.budgets || [];
+    }, { allowSignalWrites: true });
+  }
 
-  ngOnInit(): void {
-    this._sbS.sink = this.budgets$.pipe(tap((o) => {
-      this.overviewBudgets = o.overview;
-      this.dataSource.data = o.budgets;
-    })).subscribe();
+  ngAfterViewInit(): void {
+    this.dataSource.paginator = this.paginator;
+    this.dataSource.sort = this.sort;
   }
 
   /** 
- * Checks whether the user has access to a certain feature.
- * 
- * @TODO @IanOdhiambo9 - Please put proper access control architecture in place. 
- */
-  access(requested:any) 
-  {  
+   * Checking whether the user has access to a certain feature.
+   */
+  access(requested: any): boolean {  
     switch (requested) {
       case 'view':
       case 'clone':
         return true; //budget.access.owner || budget.access.view || budget.access.edit;
       case 'edit':
         return true; // (budget.access.owner || budget.access.edit) && budget.status !== BudgetStatus.InUse && budget.status !== BudgetStatus.InUse;
+      default:
+        return false;
     }
-    return false;
-  }
-
-  ngAfterViewInit(): void {
-    this.dataSource.paginator = this.paginator;
-    this.dataSource.sort = this.sort;
   }
 
   filterAccountRecords(event: Event) {
@@ -81,17 +73,17 @@ export class BudgetTableComponent {
   }
 
   promote() {
-    if (this.canPromote)
+    if (this.canPromote) {
       this.doPromote.emit();
+    }
   }
 
   /** Open share screen to configure budget access. */
-  openShareBudgetDialog(parent: Budget | false): void 
-  {
+  openShareBudgetDialog(parent: Budget | false): void {
     this._dialog.open(ShareBudgetModalComponent, {
       panelClass: 'no-pad-dialog',
       width: '600px',
-      data: parent != null ? parent : false
+      data: parent !== null ? parent : false
     });
   }
 
@@ -100,18 +92,18 @@ export class BudgetTableComponent {
     this._dialog.open(CreateBudgetModalComponent, {
       height: 'fit-content',
       width: '600px',
-      data: parent != null ? parent : false
+      data: parent !== null ? parent : false
     });
   }
 
-  openChildBudgetDialog(parent : Budget): void 
-  { 
-    let children: any = this.overviewBudgets.find((budget) => budget.budget.id === parent.id)!?.children;
-    children = children?.map((child) => child.budget)
+  openChildBudgetDialog(parent: Budget): void { 
+    const children = this.overviewBudgets().find((budget) => budget.budget.id === parent.id)?.children;
+    const childBudgets = children?.map((child) => child.budget) || [];
+    
     this._dialog.open(ChildBudgetsModalComponent, {
       height: 'fit-content',
       minWidth: '600px',
-      data: {parent: parent, budgets: children}
+      data: { parent: parent, budgets: childBudgets }
     });
   }
 
@@ -120,10 +112,10 @@ export class BudgetTableComponent {
   }
 
   deleteBudget(budget: Budget) {
-
+    // Implementation would go here
   }
 
-  translateStatus(status: number) {
+  translateStatus(status: number): string {
     switch (status) {
       case 1:
         return 'BUDGET.STATUS.ACTIVE';
