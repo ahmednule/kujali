@@ -1,8 +1,9 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
+import { toSignal } from '@angular/core/rxjs-interop';
 
 import { cloneDeep as ___cloneDeep, flatMap as __flatMap } from 'lodash';
-import { Observable, combineLatest, map, tap } from 'rxjs';
+import { combineLatest, map } from 'rxjs';
 
 import { Logger } from '@iote/bricks-angular';
 
@@ -12,7 +13,6 @@ import { BudgetsStore, OrgBudgetsStore } from '@app/state/finance/budgetting/bud
 
 import { CreateBudgetModalComponent } from '../../components/create-budget-modal/create-budget-modal.component';
 
-
 @Component({
   selector: 'app-select-budget',
   templateUrl: './select-budget.component.html',
@@ -20,74 +20,91 @@ import { CreateBudgetModalComponent } from '../../components/create-budget-modal
               '../../components/budget-view-styles.scss'],
 })
 /** List of all active budgets on the system. */
-export class SelectBudgetPageComponent implements OnInit
-{
+export class SelectBudgetPageComponent implements OnInit {
+  private _orgBudgets$$ = inject(OrgBudgetsStore);
+  private _budgets$$ = inject(BudgetsStore);
+  private _dialog = inject(MatDialog);
+  private _logger = inject(Logger);
+
   /** Overview which contains all budgets of an organisation */
-  overview$!: Observable<OrgBudgetsOverview>;
-  sharedBudgets$: Observable<any[]>;
+  overview = toSignal(this._orgBudgets$$.get(), { initialValue: null });
+  sharedBudgets = toSignal(this._budgets$$.get(), { initialValue: [] });
 
-  showFilter = false;
+  showFilter = signal(false);
 
-  // budgetsLoaded: boolean = false;
+  // Convert the combined observable to a computed signal
+  allBudgets = computed(() => {
+    const overviewVal = this.overview();
+    const budgetsVal = this.sharedBudgets();
+    
+    if (!overviewVal || !budgetsVal) {
+      return { overview: [], budgets: [] };
+    }
 
-  allBudgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
+    const combined = { 
+      overview: __flatMap(overviewVal), 
+      budgets: __flatMap(budgetsVal) 
+    };
+    
+    // Transform budgets to add endYear property
+    const transformedBudgets = combined.budgets.map((budget: any) => ({
+      ...budget,
+      endYear: budget.startYear + budget.duration - 1
+    }));
 
-  constructor(private _orgBudgets$$: OrgBudgetsStore,
-              private _budgets$$: BudgetsStore,
-              private _dialog: MatDialog,
-              private _logger: Logger) 
-  { }
+    return { 
+      overview: combined.overview, 
+      budgets: transformedBudgets 
+    };
+  });
+
+  constructor() {
+    // Use effect for side effects like logging
+    effect(() => {
+      const budgets = this.allBudgets().budgets;
+      if (budgets?.length) {
+        this._logger.log(() => `Budgets loaded: ${budgets.length}`);
+      }
+    }, { allowSignalWrites: true });
+  }
 
   ngOnInit() {
-    this.overview$ = this._orgBudgets$$.get();
-    this.sharedBudgets$ = this._budgets$$.get();
-
-    this.allBudgets$ = combineLatest([this.overview$, this._budgets$$.get()])
-                      .pipe(map(([overview, budgets]) => {return {overview: __flatMap(overview), budgets: __flatMap(budgets)}}),
-                            map((overview) => {
-                              const trBudgets = overview.budgets.map((budget: any) => {budget['endYear'] = budget.startYear + budget.duration - 1; return budget;})
-                              // this.budgetsLoaded = true;
-                              return {overview: overview.overview, budgets: trBudgets}
-                            }));
+    // No need for manual subscriptions since signals handle this automatically
   }
 
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
-    // this.dataSource.filter = filterValue.trim().toLowerCase();
+    
   }
 
   fieldsFilter(value: (Invoice) => boolean) {    
-    // this.filter$$.next(value);
   }
 
-  toogleFilter(value) {
-    // this.showFilter = value
+  toogleFilter(value: boolean) {
+    this.showFilter.set(value);
   }
 
-  openDialog(parent : Budget | false): void 
-  {
+  openDialog(parent: Budget | false): void {
     const dialog = this._dialog.open(CreateBudgetModalComponent, {
       height: 'fit-content',
       width: '600px',
-      data: parent != null ? parent : false
+      data: parent !== null ? parent : false
     });
 
     dialog.afterClosed().subscribe(() => {
       // Dialog after action
-    })
+    });
   }
 
   /** 
-   * @TODO - Review and fix
    * Returns true if the budget can be activated */
-  canPromote(record: BudgetRecord) {
+  canPromote(record: BudgetRecord): boolean {
     // Get's set on Budget Read from user privileges and budget status.
     return (record.budget as any).canBeActivated;
   }
 
   /** Activate budget -> Promote to be used in  */
-  setActive(record: BudgetRecord) 
-  {
+  setActive(record: BudgetRecord) {
     const toSave = ___cloneDeep(record.budget);
 
     // Clean up budget record values.
@@ -97,12 +114,11 @@ export class SelectBudgetPageComponent implements OnInit
     // Set Active
     toSave.status = BudgetStatus.InUse;
 
-    (<any> record).updating = true;
-    // Fire update
-    this._budgets$$.update(toSave)
-      .subscribe(() => {
-        (<any> record).updating = false;
-        this._logger.log(() => `Updated Budget with id ${toSave.id}. Set as an active budget for this org.`) 
-      });
+    (record as any).updating = true;
+    
+    this._budgets$$.update(toSave).subscribe(() => {
+      (record as any).updating = false;
+      this._logger.log(() => `Updated Budget with id ${toSave.id}. Set as an active budget for this org.`) 
+    });
   }
 }

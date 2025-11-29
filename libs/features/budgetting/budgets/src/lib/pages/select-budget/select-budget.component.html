@@ -12,13 +12,12 @@
       </kujali-finance-search-header-card>
     </kujali-finance-toolbar>
 
-    <div *ngIf="showFilter" class="filter-section">
-      <!-- <kujali-invoices-filter (filterChanged)='fieldsFilter($event)'>
-			</kujali-invoices-filter> -->
+    <div *ngIf="showFilter()" class="filter-section">
+      <!-- Filter component would need signal-based refactor here -->
     </div>
 
     <div class="table-container">
-      <app-budget-table [budgets$]="allBudgets$"></app-budget-table>
+      <app-budget-table [attr.budgets]="allBudgets()"></app-budget-table>
     </div>
   </div>
 </app-page>
